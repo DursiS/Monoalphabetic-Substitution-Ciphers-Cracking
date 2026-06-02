@@ -133,8 +133,18 @@ if __name__ == "__main__":
     vec = np.random.default_rng(0).random(26)
     print("".join(string.ascii_uppercase[i] for i in np.argsort(vec)))
 
-    # plain = clean_text("The cat ran bat over the moon to the lawn")
-    plain = clean_text("the quick brown fox jumps over the lazy dog these motions")
+    # plain = clean_text(
+    #     "It is a truth universally acknowledged that a single man in "
+    #     "possession of a good fortune must be in want of a wife. However "
+    #     "little known the feelings or views of such a man may be on his first "
+    #     "entering a neighbourhood, this truth is so well fixed in the minds of "
+    #     "the surrounding families that he is considered the rightful property "
+    #     "of some one or other of their daughters."
+    # )
+
+    # cracker recovers only a fraction. Uncomment the long text above to compare.
+    plain = clean_text("the storm passed and a calm morning followed")
+
     key = random_key(seed=42)
     ct = encrypt(plain, key)
 
@@ -162,11 +172,7 @@ if __name__ == "__main__":
         print(f"  recovered: {recovered}")
         print(f"  exact match? {recovered == plain}")
         print(f"  chars correct: {n_right}/{len(plain)}")
-        print(
-            "  (Any residual chars are rare letters the top-5k quadgram table"
-            " can't disambiguate — a DATA limit; load the full ~390k table"
-            " for the last few.)"
-        )
+
     except NotImplementedError:
         print("  not implemented yet")
 
