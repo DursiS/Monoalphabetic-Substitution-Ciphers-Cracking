@@ -5,7 +5,7 @@ Practice target for cracking with differential evolution later.
 import random
 import string
 
-ALPHABET = string.ascii_uppercase  # 'ABC...Z'
+ALPHABET = string.ascii_uppercase
 
 
 def random_key(seed=None):

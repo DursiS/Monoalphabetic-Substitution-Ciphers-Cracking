@@ -8,14 +8,13 @@ Pipeline you're implementing:
 Fill in the three TODOs. Self-checks included; run this file to test as you go.
 """
 
-import numpy as np
-import string
 from math import log10
-from scipy.optimize import differential_evolution
 
 from substitution import ALPHABET, encrypt, decrypt, clean_text, random_key
 
-from quadgrams import QUADGRAMS
+from CipherSolvingDE.data.quadgrams import QUADGRAMS
+
+import numpy as np, string
 
 
 def load_quadgrams(path=None):
@@ -124,11 +123,7 @@ def crack_hillclimb(ciphertext, restarts=20, seed=0):
     return best_key, decrypt(ciphertext, best_key)
 
 
-# --------------------------------------------------------------------------
-# Self-checks
-# --------------------------------------------------------------------------
 if __name__ == "__main__":
-    import numpy as np, string
 
     vec = np.random.default_rng(0).random(26)
     print("".join(string.ascii_uppercase[i] for i in np.argsort(vec)))
