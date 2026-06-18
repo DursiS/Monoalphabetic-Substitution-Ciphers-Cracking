@@ -4,10 +4,10 @@ from collections import Counter
 
 import numpy as np
 
-from CipherSolvingDE.data.sample_texts import SAMPLE_TEXTS
-from CipherSolvingDE.DE import fitness
-from CipherSolvingDE.modernCiphers import ModernTextCipher
-from CipherSolvingDE.substitution import clean_text, encrypt
+from CipherCracking.data.sample_texts import SAMPLE_TEXTS
+from CipherCracking.DE import fitness
+from CipherCracking.modernCiphers import ModernTextCipher
+from CipherCracking.substitution import clean_text, encrypt
 
 ALPHABET = string.ascii_uppercase
 
