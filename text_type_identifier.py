@@ -1,134 +1,128 @@
-import random
-import string
 from collections import Counter
+from typing import Any
 
 import numpy as np
+from numpy import floating
 
-from CipherCracking.data.sample_texts import SAMPLE_TEXTS
-from CipherCracking.DE import fitness
-from CipherCracking.modernCiphers import ModernTextCipher
-from CipherCracking.substitution import clean_text, encrypt
-
-ALPHABET = string.ascii_uppercase
-
-
-def getEntropy(text: str) -> float:
-    """Return the entropy of <text> based on its letter distribution."""
-    counts = Counter(text)
-    n = len(text)
-    bits = sum([(c / n) * np.log(c / n) for c in counts.values()])
-    return -bits
+from Cipher_Cracking.data.facade import CipherStarter
+from Cipher_Cracking.data.sample_texts import SAMPLE_TEXTS
+from Cipher_Cracking.fernet_modern import ModernTextCipher
+from Cipher_Cracking.monoalphabetic import MonoalphabeticCipher
 
 
-def textType(raw_text: str, entropy_means, fitness_means, allowed_error=0.25) -> str:
-    """Return the estimated type of text of <text>."""
-    entropy_mid = (entropy_means["PLAIN"] + entropy_means["SUBSTITUTION"]) * 0.5
+class TextTypeIdentifier:
+    """Classify a text as PLAIN, SUBSTITUTION, or MODERN.
 
-    if np.abs(getEntropy(clean_text(raw_text)) - entropy_mid) < allowed_error:
-        if np.abs(fitness(raw_text) - fitness_means["SUBSTITUTION"]) < np.abs(
-            fitness(raw_text) - fitness_means["PLAIN"]
-        ):
-            return "SUBSTITUTION"
-        else:
-            return "PLAIN"
-    else:
+    Two signals, calibrated on a sample corpus at construction:
+      - letter-distribution entropy: MODERN ciphertext is near-uniform (high
+        entropy), classical text is not -- this peels MODERN off first.
+      - English quadgram fitness: separates PLAIN from SUBSTITUTION (a
+        substitution preserves letter frequencies, so entropy alone can't).
+    """
+
+    starter: CipherStarter
+
+    def __init__(self, starter: CipherStarter, plain_texts: list[str]) -> None:
+        self.starter = starter
+        self.substitution = MonoalphabeticCipher(starter)
+        self.modern = ModernTextCipher()
+
+        self.plain_texts = plain_texts
+        self.substituted = self.substitute_texts(plain_texts)
+        self.modern_texts = self.modernize_texts(plain_texts)
+
+        self.entropy_means = self.text_type_entropies()
+        self.fitness_means = self.text_type_fitness()
+
+    def get_entropy(self, text: str) -> float:
+        """Return the entropy of <text> based on its letter distribution."""
+        counts = Counter(text)
+        n = len(text)
+        bits = sum((c / n) * np.log(c / n) for c in counts.values())
+        return -bits
+
+    def substitute_texts(self, plain_texts: list[str]) -> list[str]:
+        """Substitution-encrypt every text with one fixed random key."""
+        key = self.starter.vector_to_key(np.random.default_rng(0).random(26))
+        return [self.substitution.encrypt(text, key) for text in plain_texts]
+
+    def modernize_texts(self, plain_texts: list[str]) -> list[str]:
+        """Modern (Fernet) encrypt every text."""
+        return [self.modern.encrypt(text) for text in plain_texts]
+
+    def text_type_entropies(self) -> dict[str, floating[Any]]:
+        """Average letter-distribution entropy per text type (cleaned to A-Z)."""
+        clean = self.starter.clean_text
+        return {
+            "PLAIN": np.mean([self.get_entropy(clean(t)) for t in self.plain_texts]),
+            "SUBSTITUTION": np.mean(
+                [self.get_entropy(clean(t)) for t in self.substituted]
+            ),
+            "MODERN": np.mean([self.get_entropy(clean(t)) for t in self.modern_texts]),
+        }
+
+    def text_type_fitness(self) -> dict[str, floating[Any]]:
+        """Average English quadgram fitness per text type."""
+        fitness = self.starter.fitness
+        return {
+            "PLAIN": np.mean([fitness(t) for t in self.plain_texts]),
+            "SUBSTITUTION": np.mean([fitness(t) for t in self.substituted]),
+            "MODERN": np.mean([fitness(t) for t in self.modern_texts]),
+        }
+
+    def text_type(self, raw_text: str, allowed_error: float = 0.25) -> str:
+        """Return the estimated type of <raw_text>: PLAIN, SUBSTITUTION, or MODERN."""
+        entropy_mid = (
+            self.entropy_means["PLAIN"] + self.entropy_means["SUBSTITUTION"]
+        ) * 0.5
+        cleaned = self.starter.clean_text(raw_text)
+
+        if np.abs(self.get_entropy(cleaned) - entropy_mid) < allowed_error:
+            score = self.starter.fitness(raw_text)
+            to_sub = np.abs(score - self.fitness_means["SUBSTITUTION"])
+            to_plain = np.abs(score - self.fitness_means["PLAIN"])
+            return "SUBSTITUTION" if to_sub < to_plain else "PLAIN"
         return "MODERN"
 
-
-def getSubstitutedTexts(plain_texts: list[str]) -> list[str]:
-    """Return a list of substituted texts from texts in <plain_texts>."""
-    vec: np.ndarray = np.random.default_rng(0).random(26)
-    key: str = "".join(string.ascii_uppercase[i] for i in np.argsort(vec))
-
-    return [encrypt(raw_text, key) for raw_text in plain_texts]
-
-
-def getModernTexts(plain_texts: list[str]) -> list[str]:
-    """Return a list of modern encrypted texts from texts in <plain_texts>."""
-    modern = ModernTextCipher()
-    return [modern.encrypt(raw_text) for raw_text in plain_texts]
-
-
-SUBSTITUTED = getSubstitutedTexts(SAMPLE_TEXTS)
-MODERN = getModernTexts(SAMPLE_TEXTS)
+    def identification_frequency(self) -> dict[str, float]:
+        """Identify the fraction of each calibrated corpus that text_
+        type() labels correctly."""
+        n = len(self.plain_texts)
+        corpora = {
+            "PLAIN": self.plain_texts,
+            "SUBSTITUTION": self.substituted,
+            "MODERN": self.modern_texts,
+        }
+        return {
+            label: round(sum(self.text_type(t) == label for t in texts) / n, 4)
+            for label, texts in corpora.items()
+        }
 
 
-def identificationFrequency(
-    plain_texts: list[str], entropy_means, fitness_means
-) -> dict[str, float]:
-    """Return the frequency of identification of textType of
-    texts in <texts>."""
-    identifications, n = {}, len(plain_texts)
+def text_type_identification_test() -> None:
+    """Build the identifier on the sample corpus and report how well it
+    separates PLAIN / SUBSTITUTION / MODERN text."""
+    starter = CipherStarter()
+    identifier = TextTypeIdentifier(starter, SAMPLE_TEXTS)
 
-    # Plain
-    for raw_text in plain_texts:
-        if "PLAIN" not in identifications:
-            identifications["PLAIN"] = 0
-        if textType(raw_text, entropy_means, fitness_means) == "PLAIN":
-            identifications["PLAIN"] += 1
-    identifications["PLAIN"] = identifications["PLAIN"] / n
+    em = identifier.entropy_means
+    print("== Average Entropies ==")
+    print(f"  Plain:        {em['PLAIN']:.4f}")
+    print(f"  Substitution: {em['SUBSTITUTION']:.4f}")
+    print(f"  Modern:       {em['MODERN']:.4f}\n")
 
-    # Substitution
-    for cipher in SUBSTITUTED:
-        if "SUBSTITUTION" not in identifications:
-            identifications["SUBSTITUTION"] = 0
-        if textType(cipher, entropy_means, fitness_means) == "SUBSTITUTION":
-            identifications["SUBSTITUTION"] += 1
-    identifications["SUBSTITUTION"] = identifications["SUBSTITUTION"] / n
+    fm = identifier.fitness_means
+    print("== Average Fitness ==")
+    print(f"  Plain:        {fm['PLAIN']:.2f}")
+    print(f"  Substitution: {fm['SUBSTITUTION']:.2f}")
+    print(f"  Modern:       {fm['MODERN']:.2f}\n")
 
-    # Modern
-    for encrypted in MODERN:
-        if "MODERN" not in identifications:
-            identifications["MODERN"] = 0
-        if textType(encrypted, entropy_means, fitness_means) == "MODERN":
-            identifications["MODERN"] += 1
-    identifications["MODERN"] = round(identifications["MODERN"] / n, 4)
-
-    return identifications
-
-
-def textTypeEntropies(plain_texts: list[str]) -> dict[str, float]:
-    """Return a dictionary of textType to average entropy amount
-    sample texts."""
-
-    return {
-        "PLAIN": np.array([getEntropy(text) for text in plain_texts]).mean(),
-        "SUBSTITUTION": np.array([getEntropy(text) for text in SUBSTITUTED]).mean(),
-        "MODERN": np.array([getEntropy(text) for text in MODERN]).mean(),
-    }
-
-
-def textTypeFitness(plain_texts: list[str]) -> dict[str, float]:
-    """Return a dictionary of textType to average fitness of sample texts."""
-    return {
-        "PLAIN": np.array([fitness(text) for text in plain_texts]).mean(),
-        "SUBSTITUTION": np.array([fitness(text) for text in SUBSTITUTED]).mean(),
-        "MODERN": np.array([fitness(text) for text in MODERN]).mean(),
-    }
+    freq = identifier.identification_frequency()
+    print("== Identification Accuracy (fraction correct) ==")
+    print(f"  Plain:        {freq['PLAIN']}")
+    print(f"  Substitution: {freq['SUBSTITUTION']}")
+    print(f"  Modern:       {freq['MODERN']}")
 
 
 if __name__ == "__main__":
-
-    entropy_means = textTypeEntropies(SAMPLE_TEXTS)
-    print(
-        f"== Average Entropies ==\n"
-        f"Plain: {entropy_means["PLAIN"]}\n"
-        f"Substitution: {entropy_means["SUBSTITUTION"]}\n"
-        f"Modern: {entropy_means["MODERN"]}\n"
-    )
-
-    fitness_means = textTypeFitness(SAMPLE_TEXTS)
-    print(
-        f"== Average Fitness ==\n"
-        f"Plain: {fitness_means["PLAIN"]}\n"
-        f"Substitution: {fitness_means["SUBSTITUTION"]}\n"
-        f"Modern: {fitness_means["MODERN"]}\n"
-    )
-
-    freq = identificationFrequency(SAMPLE_TEXTS, entropy_means, fitness_means)
-    print(
-        f"== TextType Identification Frequency ==\n"
-        f"Plain: {freq["PLAIN"]}\n"
-        f"Substitution: {freq["SUBSTITUTION"]}\n"
-        f"Modern: {freq["MODERN"]}\n"
-    )
+    text_type_identification_test()

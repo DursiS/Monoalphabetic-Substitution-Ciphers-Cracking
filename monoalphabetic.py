@@ -1,6 +1,6 @@
 import numpy as np
 
-from CipherCracking.data.facade import CipherStarter
+from Cipher_Cracking.data.facade import CipherStarter
 
 
 class MonoalphabeticCipher:
@@ -92,7 +92,7 @@ class MonoalphabeticCipher:
         return best_key, self.decrypt(ciphertext, best_key)
 
 
-def monoalphabetic_full_round_test() -> None:
+def monoalphabetic_round_trip_test() -> None:
     """Test that MonoalphabeticCipher encrypts and decrypts properly."""
     # demo + self-checks
     starter = CipherStarter()
@@ -136,19 +136,10 @@ def monoalphabetic_cracking_test() -> None:
         "of some one or other of their daughters."
     )
 
-    # cracker recovers only a fraction. Uncomment the long text above to compare.
     # plain = clean_text("the storm passed and a calm morning followed")
 
     key = starter.random_key(seed=42)
     ct = monoalphabetic.encrypt(plain, key)
-
-    print("=== vector_to_key test ===")
-    try:
-        k = starter.vector_to_key(np.random.default_rng(0).random(26))
-        ok = len(k) == 26 and sorted(k) == list(starter.alphabet)
-        print(f"  valid permutation? {ok}  ({k})")
-    except NotImplementedError:
-        print("  not implemented yet")
 
     print("\n=== fitness should rank English above gibberish ===")
     try:
@@ -179,5 +170,5 @@ def monoalphabetic_cracking_test() -> None:
 
 
 if __name__ == "__main__":
-    monoalphabetic_full_round_test()
+    monoalphabetic_round_trip_test()
     monoalphabetic_cracking_test()

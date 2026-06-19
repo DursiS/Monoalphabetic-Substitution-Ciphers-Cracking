@@ -5,8 +5,8 @@ from math import log10
 
 import numpy as np
 
-from CipherCracking.data.letter_frequencies import LETTER_FREQ
-from CipherCracking.data.sample_texts import TEXTS_BY_LENGTH
+from Cipher_Cracking.data.letter_frequencies import LETTER_FREQ
+from Cipher_Cracking.data.sample_texts import TEXTS_BY_LENGTH
 
 QUADGRAMS_PATH = "data/quadgrams.json"
 
@@ -76,3 +76,43 @@ class CipherStarter:
         Return a 26-char key string that is a valid permutation of A-Z."""
         order = np.argsort(vec)
         return "".join(self.alphabet[i] for i in order)
+
+    def text_to_indices(self, text: str) -> list[int]:
+        """Return a list of integer 0-25 corresponding to each letter's
+        order in the alphabet."""
+        return [self.alphabet.index(char) for char in text]
+
+    def indices_to_text(self, indices: list[int]) -> str:
+        """Return the text for which each index in <indices<
+        corresponds to its position in the alphabet."""
+        return "".join(self.alphabet[idx] for idx in indices)
+
+    def get_english_letter_frequencies(self) -> dict[str, float]:
+        return {
+            "A": 0.08167,
+            "B": 0.01492,
+            "C": 0.02782,
+            "D": 0.04253,
+            "E": 0.12702,
+            "F": 0.02228,
+            "G": 0.02015,
+            "H": 0.06094,
+            "I": 0.06966,
+            "J": 0.00153,
+            "K": 0.00772,
+            "L": 0.04025,
+            "M": 0.02406,
+            "N": 0.06749,
+            "O": 0.07507,
+            "P": 0.01929,
+            "Q": 0.00095,
+            "R": 0.05987,
+            "S": 0.06327,
+            "T": 0.09056,
+            "U": 0.02758,
+            "V": 0.00978,
+            "W": 0.02360,
+            "X": 0.00150,
+            "Y": 0.01974,
+            "Z": 0.00074,
+        }
