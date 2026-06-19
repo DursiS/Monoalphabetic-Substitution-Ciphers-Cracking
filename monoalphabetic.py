@@ -1,6 +1,6 @@
 import numpy as np
 
-from Cipher_Cracking.data.facade import CipherStarter
+from Cipher_Cracking.preprocessing.facade import CipherStarter
 
 
 class MonoalphabeticCipher:

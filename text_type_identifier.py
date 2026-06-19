@@ -4,9 +4,9 @@ from typing import Any
 import numpy as np
 from numpy import floating
 
-from Cipher_Cracking.data.facade import CipherStarter
+from Cipher_Cracking.preprocessing.facade import CipherStarter
 from Cipher_Cracking.data.sample_texts import SAMPLE_TEXTS
-from Cipher_Cracking.fernet_modern import ModernTextCipher
+from Cipher_Cracking.preprocessing.fernet_modern import ModernTextCipher
 from Cipher_Cracking.monoalphabetic import MonoalphabeticCipher
 
 
