@@ -80,7 +80,7 @@ class CipherStarter:
     def text_to_indices(self, text: str) -> list[int]:
         """Return a list of integer 0-25 corresponding to each letter's
         order in the alphabet."""
-        return [self.alphabet.index(char) for char in text]
+        return [self.alphabet.index(ch) for ch in text]
 
     def indices_to_text(self, indices: list[int]) -> str:
         """Return the text for which each index in <indices<
