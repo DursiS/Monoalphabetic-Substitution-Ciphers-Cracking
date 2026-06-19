@@ -1,9 +1,10 @@
 import random
+import time
 from collections import Counter
 
 import numpy as np
 
-from Cipher_Cracking.data.facade import CipherStarter
+from Cipher_Cracking.preprocessing.facade import CipherStarter
 
 COLLISION_THRESHOLD = 0.06
 ENGLISH_COLLISION = 0.067
@@ -32,6 +33,9 @@ class PolyalphabeticCipher:
 
     def fit_key(self, clean_text: str, clean_key: str) -> str:
         """Return key repeated pasted to fit the length of <text>."""
+        if not clean_key:
+            raise ValueError("key is empty after cleaning")
+
         fitted_key = clean_key
         while len(fitted_key) < len(clean_text):
             fitted_key += clean_key
@@ -67,52 +71,50 @@ class PolyalphabeticCipher:
             result.append(self.decryption_table[i][j])
         return self.starter.indices_to_text(result)
 
-    def counts(self, clean_text: str) -> dict[str, int]:
+    def counts(self, col: list[str]) -> dict[str, int]:
         """Return a dictionary mapping letters to their count."""
         result = {}
-        for ch in set(clean_text):
-            result[ch] = clean_text.count(ch)
+        for ch in set(col):
+            result[ch] = col.count(ch)
         return result
 
-    def collision(self, clean_text: str) -> float:
-        """Return the Collision probability of 2 randomly chosen letters."""
-        counts = self.counts(clean_text)
-        N = len(clean_text)
+    def ioc(self, col: str) -> float:
+        """Return the index of coincidence of 2 randomly chosen letters."""
+        counts = self.counts(list(col))
+        N = len(col)
 
         result = 0
         for ch in list(counts.keys()):
             result += (counts[ch] * (counts[ch] - 1)) / (N * (N - 1))
+
+        if result < 0 or result > 1:
+            raise ValueError
         return result
 
     def get_columns(self, clean_text: str, key_len: int) -> list[str]:
         """Return a list of columns of text by splitting the text
         by key length."""
-        result = []
-        for i in range(key_len):
-            col = ""
-            while i < len(clean_text):
-                col += clean_text[i]
-                i += key_len
-            result.append(col)
-        return result
+        return [clean_text[i::key_len] for i in range(key_len)]
 
     def get_key_length(
         self, clean_text: str, col_threshold: float, min_len=2, max_len=20
     ) -> int:
         """Return the length of the key"""
-        candidate_sizes = []
-        candidates_collisions = []
 
+        above_threshold = []
+        averages, sizes = [], []
         for i in range(min_len, max_len):
             cols = self.get_columns(clean_text, i)
-            collisions = np.array([self.collision(col) for col in cols])
+            collisions = np.array([self.ioc(col) for col in cols])
             avg = collisions.mean()
-
             if avg > col_threshold:
-                candidate_sizes.append(i)
-                candidates_collisions.append(avg)
+                above_threshold.append(i)
+            averages.append(avg)
+            sizes.append(i)
 
-        return candidate_sizes[np.argmin(candidates_collisions)]
+        if len(above_threshold) == 0:
+            return sizes[np.argmax(averages)]
+        return min(above_threshold)
 
     def chi_squared(self, column: list[str]) -> float:
         """Return chi-squared for letter frequency in column."""
@@ -123,27 +125,30 @@ class PolyalphabeticCipher:
         for letter, p in freq.items():
             observed = counts.get(letter, 0)
             expected = p * N
-            chi2 += (observed - expected) ** 2 / expected
+            chi2 += (expected - observed) ** 2 / expected
         return chi2
 
     def crack_key(
         self, clean_text: str, col_threshold: float, min_len=2, max_len=20
     ) -> str:
+        """Return the key that makes the most english-like text
+        when decrypted."""
         key_len = self.get_key_length(clean_text, col_threshold, min_len, max_len)
-        cols = self.get_columns(clean_text, key_len)
+        print(f"Recovered key length: {key_len}")
+        cols = self.get_columns(clean_text, int(key_len))
 
-        def shift_by_i(letter: str, i: int) -> str:
-            """Return the shifted index in the alphabet of <letter>"""
-            key = (self.starter.alphabet.index(letter) + i) % 26
-            return self.starter.alphabet[key]
+        def shift_by_i(ch: str, i: int) -> str:
+            """Shift by"""
+            idx = (self.starter.alphabet.index(ch) - i) % 26
+            return self.starter.alphabet[idx]
 
         key = ""
         for col in cols:
             chi2 = []
-            for shift_i in range(0, 25):
+            for shift_i in range(26):
                 shifted_col = [shift_by_i(ch, shift_i) for ch in col]
                 chi2.append(self.chi_squared(shifted_col))
-            key += self.starter.alphabet[np.argmin(chi2)]
+            key += self.starter.alphabet[int(np.argmin(chi2))]
         return key
 
     def crack(self, text: str, col_threshold: float, min_len=2, max_len=20) -> str:
@@ -189,20 +194,30 @@ def polyalphabetic_cracking_test() -> None:
     starter = CipherStarter()
     polyalphabetic = PolyalphabeticCipher(starter)
 
-    length = random.randint(2, 26)
+    length = random.randint(2, 20)
     key = "".join(starter.alphabet[random.randint(0, 25)] for _ in range(length))
     print(f"key:        {key}")
-    print(f"            {starter.alphabet}  (plain, for reference)")
+    print(f"key length:        {len(key)}")
 
-    msg = "The quick brown fox jumps over the lazy dog. Attack at dawn!"
+    # msg = "The quick brown fox jumps over the lazy dog. Attack at dawn!"
+    msg = starter.clean_text(
+        "It is a truth universally acknowledged that a single man in "
+        "possession of a good fortune must be in want of a wife. However "
+        "little known the feelings or views of such a man may be on his first "
+        "entering a neighbourhood, this truth is so well fixed in the minds of "
+        "the surrounding families that he is considered the rightful property "
+        "of some one or other of their daughters."
+    )
     ct = polyalphabetic.encrypt(msg, key)
     print(f"\nplaintext:  {starter.clean_text(msg)}")
     print(f"ciphertext: {ct}")
 
-    # CHECK 1: crack(encrypt(x)) == x
-    back = polyalphabetic.crack(ct, 0.06)
-
-    print(f"\nround-trip: {back}")
+    # CHECK 1: crack(encrypt(x)) == msg
+    t0 = time.perf_counter()
+    back = polyalphabetic.crack(ct, COLLISION_THRESHOLD)
+    elapsed = time.perf_counter() - t0
+    print(f"\ncracking-time: {elapsed}s")
+    print(f"\ncracked-text: {back}")
     print(f"  matches cleaned plaintext? {back == starter.clean_text(msg)}")
 
 
