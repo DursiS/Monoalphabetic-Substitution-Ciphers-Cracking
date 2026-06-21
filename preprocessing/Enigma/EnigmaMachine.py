@@ -91,6 +91,11 @@ class EnigmaMachine:
     reflector: dict[str, str]
 
     def __init__(self, settings: EnigmaSetting) -> None:
+        self.set_settings(settings)
+
+    def set_settings(self, settings: EnigmaSetting) -> None:
+        """Configure (or reconfigure) the machine from <settings>: rebuild the
+        rotors at their daily-ground positions and fit the reflector."""
         self.settings = settings
         self.rotaries = tuple(
             Rotary(settings.rotary_order[i], i, settings.daily_ground[i])
