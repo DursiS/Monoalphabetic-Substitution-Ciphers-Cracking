@@ -1,7 +1,7 @@
 import time
 from collections import defaultdict
-from itertools import combinations
-from typing import Any
+from itertools import permutations, product
+from typing import Any, Counter
 
 import numpy as np
 
@@ -31,27 +31,30 @@ class EnigmaCracker:
     starter: CipherStarter
     enigma: EnigmaMachine
 
-    def __init__(self, starter: CipherStarter, cribs: list[str]) -> None:
+    def __init__(
+        self, starter: CipherStarter, cribs: list[str], enigma: EnigmaMachine
+    ) -> None:
         self.starter = starter
         self.cribs = cribs
+        self.enigma = enigma
 
     def crack(self, message: str) -> str:
-        """Return <message> decrypted
-
-        No letter could map to itself
-        Compare samples decryption to cribs
-        """
+        """Return <message> decrypted"""
         clean_text = self.starter.clean_text(message)
         rotor_states = self.rotor_states()
-        edge_dct = self.build_edges(clean_text, self.cribs)
+        edges_dict = self.build_edges(clean_text, self.cribs)
 
         candidates = []
-        for alignment in list(edge_dct.keys()):
-            graph = self.get_graph(alignment)
+        for alignment in list(edges_dict.keys()):
+            edges = edges_dict[alignment]
+            graph = self.get_graph(edges)
             loops = self.find_loops(graph)
+
             if not loops:
                 continue
             for abs_state in rotor_states:
+                plugboard = self.get_plugboard(loops, abs_state)
+                self.enigma.set_plugboard(plugboard)
                 if all(self.has_fixed_point(loop, abs_state) for loop in loops):
                     candidates.append(abs_state)
 
@@ -62,28 +65,168 @@ class EnigmaCracker:
             return ""
         return self.best_target(plaintexts)
 
-    def fine_loops(self, graph: defaultdict[Any, list]) -> tuple:
-        """Return linked lists for every loop found in graph"""
-        pass
+    def char_loops(
+        self, graph: defaultdict[Any, list], start: str
+    ) -> list[list[tuple[str, str, int]]]:
+        """Return every simple loop through <start>, each as a list of
+        positioned edges [(from, to, pos), ...] that chains back to <start>.
 
-    def has_fixed_point(self, loop: tuple, abs_state: list) -> bool:
-        """Return whether loop still maps to itself when
-        the machine is instantiated with abs_state."""
-        pass
+        Detection is a depth-first walk that never revisits a letter (except to
+        close at <start>) and never reuses the same physical edge -- an edge is
+        keyed by (frozenset({a, b}), pos), so two edges between the same letters
+        at different offsets still count as a genuine two-step loop.
+        """
+        result: list[list[tuple[str, str, int]]] = []
 
-    def decrypt_with(self, clean_text: str, candidate: str) -> str:
+        def dfs(node, visited, used_edges, path):
+            for neighbor, pos in graph.get(node, []):
+                edge_id = (frozenset((node, neighbor)), pos)
+                if edge_id in used_edges:
+                    continue
+                edge = (node, neighbor, pos)
+                if neighbor == start and path:
+                    result.append(path + [edge])
+                elif neighbor not in visited:
+                    dfs(
+                        neighbor,
+                        visited | {neighbor},
+                        used_edges | {edge_id},
+                        path + [edge],
+                    )
+
+        dfs(start, {start}, set(), [])
+        return result
+
+    def find_loops(
+        self, graph: defaultdict[Any, list]
+    ) -> list[list[tuple[str, str, int]]]:
+        """Return one representative per distinct closure in the menu, each a
+        list of positioned edges. char_loops yields a cycle once per direction
+        and once per starting node, so dedup on the canonical edge set."""
+        seen = set()
+        result = []
+        for char in list(graph.keys()):
+            for loop in self.char_loops(graph, char):
+                key = frozenset((frozenset((frm, to)), pos) for frm, to, pos in loop)
+                if key not in seen:
+                    seen.add(key)
+                    result.append(loop)
+        return result
+
+    def get_wire(
+        self,
+        loop: list[tuple[str, str, int]],
+        scramblers: dict[int, dict[str, str]],
+    ) -> tuple[str, str] | None:
+        """Recover the single plugboard wire for this loop's anchor letter under
+        a confirmed rotor state (given its scramblers). Returns (anchor, partner),
+        or None if zero or many partners survive (wrong state -> no clean wire)."""
+        anchor = loop[0][0]
+        survivors = [
+            partner
+            for partner in self.starter.alphabet
+            if self.propagate_is_consistent(loop, scramblers, partner)
+        ]
+        if len(survivors) == 1:
+            return (anchor, survivors[0])
+        return None
+
+    def get_plugboard(
+        self, loops: list[list[tuple[str, str, int]]], rotor_state
+    ) -> list[tuple[str, str]]:
+        """Assemble plugboard wires across all loops under a confirmed state.
+        The plugboard-free scramblers are built once for every offset used."""
+        positions = {pos for loop in loops for _, _, pos in loop}
+        scramblers = self.enigma.scramblers_for(rotor_state, positions)
+
+        settings = []
+        for loop in loops:
+            wire = self.get_wire(loop, scramblers)
+            if wire is None:
+                continue
+            # guard reciprocity
+            if wire not in settings and (wire[1], wire[0]) not in settings:
+                settings.append(wire)
+        return settings
+
+    def propagate_is_consistent(
+        self,
+        loop: list[tuple[str, str, int]],
+        scramblers: dict[int, dict[str, str]],
+        assumed_partner: str,
+    ) -> bool:
+        """Assume the anchor's stecker partner = assumed_partner, propagate it
+        around the loop through the precomputed plugboard-free scramblers, and
+        report whether it closes back on itself."""
+        current = assumed_partner
+        for _, _, pos in loop:
+            current = scramblers[pos][current]
+        return current == assumed_partner
+
+    def has_fixed_point(
+        self,
+        loop: list[tuple[str, str, int]],
+        rotor_state: tuple[tuple[int, int, int], tuple[str, str, str]],
+    ) -> bool:
+        """Return whether every edge of <loop> holds under <rotor_state>: at
+        each hop's offset the machine must map `from` -> `to`. Edges are tested
+        in position order so the rotors only ever step forward across the loop.
+        (Reciprocity means the directed edge holds whichever way it is stored.)"""
+        self.enigma.set_rotor_state(rotor_state)
+        done = 0
+        for frm, to, pos in loop:
+            while done < pos:
+                self.enigma.press("A")
+                done += 1
+            if self.enigma.press(frm) != to:
+                return False
+            done += 1
+        return True
+
+    def decrypt_with(
+        self,
+        clean_text: str,
+        candidate: tuple[tuple[int, int, int], tuple[str, str, str]],
+    ) -> str:
         """Instantiate the machine with absolute settings <candidate>
         and type in clean_text to decrypt it."""
-        pass
+        self.enigma.set_rotor_state(candidate)
+        return "".join(self.enigma.press(ch) for ch in clean_text)
 
-    def best_target(self, plaintexts: list[str], ioc_threshold=GERMAN_IOC) -> bool:
+    def best_target(self, plaintexts: list[str], ioc_threshold=GERMAN_IOC * 0.8) -> str:
         """Return the text in <plaintexts> with lowest chi-squared
         out of those that pass ioc_threshold."""
-        pass
+
+        def ioc(plaintext: str) -> float:
+            counter = Counter(plaintext)
+            N = len(plaintext)
+            return sum(c * (c - 1) for c in counter.values()) / (N * (N - 1))
+
+        def chi_squared(plaintext: str) -> float:
+            counter = Counter(plaintext)
+            freq = self.starter.get_german_letter_frequencies()
+            n = len(plaintext)
+            return sum(
+                (counter.get(letter, 0) - p * n) ** 2 / (p * n)
+                for letter, p in freq.items()
+            )
+
+        above_threshold = []
+        for plain in plaintexts:
+            if ioc(plain) > ioc_threshold:
+                above_threshold.append(plain)
+
+        if not above_threshold:
+            return ""
+
+        chi2 = []
+        for plain in above_threshold:
+            chi2.append(chi_squared(plain))
+        return above_threshold[np.argmin(chi2)]
 
     def build_edges(
         self, clean_text: str, cribs: list[str]
-    ) -> dict[tuple[str, int], tuple[str, str, int]]:
+    ) -> dict[tuple[str, int], list[tuple[str, str, int]]]:
         """Return (plain, cipher, rotor_step) edges for every valid
         crib alignment (no letter mapping to itself)."""
 
@@ -94,37 +237,35 @@ class EnigmaCracker:
         edges_dct = {}
         for crib in cribs:
             n = len(crib)
-            slices = [clean_text[i : i + n] for i in range(len(clean_text) - n + 1)]
-            no_overlap_slices = [
-                slice_ for slice_ in slices if no_self_map(crib, slice_)
-            ]
-            if no_overlap_slices:
-                for j in range(len(no_overlap_slices)):
-                    offset = slices.index(no_overlap_slices[j])
-                    new_edges = [
-                        (crib[i], no_overlap_slices[j][i], offset + i) for i in range(n)
+            for offset in range(len(clean_text) - n + 1):
+                slice_ = clean_text[offset : offset + n]
+                if no_self_map(crib, slice_):
+                    edges_dct[(crib, offset)] = [
+                        (crib[i], slice_[i], offset + i) for i in range(n)
                     ]
-                    edges_dct[(crib, offset)] = new_edges
         return edges_dct
 
-    def get_graph(self, edges: list[tuple[str, str, int]]) -> defaultdict[Any, list]:
+    def get_graph(
+        self, edges: list[tuple[str, str, int]]
+    ) -> defaultdict[Any, list[tuple[str, int]]]:
         """Return a graph of each letter and their mapping letters."""
-
         menu = defaultdict(list)
         for plain, cipher, pos in edges:
             menu[plain].append((cipher, pos))
             menu[cipher].append((plain, pos))
         return menu
 
-    def rotor_states(self) -> list:
-        """Return a list of all ((pos1, pos2, pos3), (step1, step2, step3)),"""
-        rotor_pos = [0, 1, 2]
-        rotor_step = [i for i in range(26)]
+    def rotor_states(self) -> list[tuple[tuple[int, int, int], tuple[str, str, str]]]:
+        """Return every (rotary_order, rotary_start) the machine could be in:
+        each of the 6 rotor orderings paired with each absolute start triple
+        (26^3 of them), as ((int, int, int), (str, str, str)) matching
+        EnigmaMachine.set_rotor_state."""
+        alphabet = self.starter.alphabet
 
         result = []
-        for steps in combinations(rotor_step, 3):
-            for pos in combinations(rotor_pos, 3):
-                result.append((pos, steps))
+        for order in permutations((0, 1, 2)):
+            for start in product(alphabet, repeat=3):
+                result.append((order, start))
         return result
 
 
@@ -162,6 +303,7 @@ def _demo_settings(daily_ground=("Q", "W", "E")) -> EnigmaSetting:
 def rotary_alphabetic_round_trip_test() -> None:
     """Test that EnigmaMachine encrypts and can properly
     recover the text by decryption."""
+    print(f"\n SANITY CHECK \n")
     starter = CipherStarter()
     enigma = EnigmaMachine(_demo_settings())
 
@@ -191,6 +333,7 @@ def rotary_alphabetic_round_trip_test() -> None:
 def rotary_alphabetic_cracking_test() -> None:
     """Test that EnigmaCracker can recover the message from ciphertext and
     cribs alone, without being handed the machine settings."""
+    print(f"\n CRACKING \n")
     starter = CipherStarter()
     enigma = EnigmaMachine(_demo_settings())
 
@@ -204,7 +347,7 @@ def rotary_alphabetic_cracking_test() -> None:
     print(f"cribs:      {CRIBS}")
 
     # CHECK 1: crack(encrypt(x)) == msg  (cracker only sees ciphertext + cribs)
-    cracker = EnigmaCracker(starter, CRIBS)
+    cracker = EnigmaCracker(starter, CRIBS, enigma)
     t0 = time.perf_counter()
     back = cracker.crack(ct)
     elapsed = time.perf_counter() - t0
@@ -213,37 +356,8 @@ def rotary_alphabetic_cracking_test() -> None:
     print(f"  matches cleaned plaintext? {back == msg}")
 
 
-def rotary_alphabetic_eliminate_self_maps_test() -> None:
-    """Test that eliminate_self_maps drops candidate settings whose cribs
-    overlap the text, and keeps the rest (mutating the list in place)."""
-    starter = CipherStarter()
-    cracker = EnigmaCracker(starter, CRIBS)
-    cracker.enigma = EnigmaMachine(_demo_settings())  # the sweep needs a machine
-
-    # CHECK 1: text with NO crib in it -> every candidate setting survives
-    no_crib = "ABCDEFGHIJKLMNOPQRSTUVWX"
-    kept = [
-        _demo_settings(("Q", "W", "E")),
-        _demo_settings(("A", "A", "A")),
-        _demo_settings(("M", "N", "O")),
-    ]
-    before = len(kept)
-    cracker.eliminate_self_maps(no_crib, kept)
-    print(f"no-crib text -> kept {len(kept)}/{before} settings")
-    print(f"  all kept? {len(kept) == before}")
-
-    # CHECK 2: text containing a crib ('WETTER') -> the candidate is eliminated
-    with_crib = starter.clean_text("WETTER BERICHT FUER HEUTE")
-    dropped = [_demo_settings()]
-    before = len(dropped)
-    cracker.eliminate_self_maps(with_crib, dropped)
-    print(f"crib text    -> kept {len(dropped)}/{before} settings")
-    print(f"  eliminated? {len(dropped) == 0}")
-
-
 if __name__ == "__main__":
     rotary_alphabetic_round_trip_test()
     print()
     rotary_alphabetic_cracking_test()
     print()
-    rotary_alphabetic_eliminate_self_maps_test()
