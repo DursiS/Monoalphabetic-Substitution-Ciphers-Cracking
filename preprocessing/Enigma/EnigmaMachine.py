@@ -64,6 +64,14 @@ class Rotary:
         exit = (ALPHABET.index(mapped) - self.pos) % 26
         return ALPHABET[exit], exit, rotate_next
 
+    def route(self, char: str, inwards: bool = True) -> str:
+        """Map <char> through the rotor at its CURRENT position with no stepping.
+        inwards uses the forward wiring; outwards the inverse (the return leg)."""
+        entry = (ALPHABET.index(char) + self.pos) % 26
+        table = self.inwards if inwards else self.outwards
+        mapped = table[ALPHABET[entry]]
+        return ALPHABET[(ALPHABET.index(mapped) - self.pos) % 26]
+
     def rotate(self) -> None:
         """Rotate this rotary mapping clockwise."""
         self.pos = (self.pos + 1) % 26
@@ -97,11 +105,60 @@ class EnigmaMachine:
         """Configure (or reconfigure) the machine from <settings>: rebuild the
         rotors at their daily-ground positions and fit the reflector."""
         self.settings = settings
-        self.rotaries = tuple(
-            Rotary(settings.rotary_order[i], i, settings.daily_ground[i])
-            for i in range(3)
-        )
         self.reflector = REFLECTOR_B
+        self.set_rotor_state((settings.rotary_order, settings.daily_ground))
+
+    def set_rotor_state(
+        self,
+        rotor_state: tuple[tuple[int, int, int], tuple[str, str, str]],
+    ) -> None:
+        """Set only the rotor state. <rotor_state> is (rotary_order, rotary_start):
+        rotary_order is which wiring sits in each slot (left to right) and
+        rotary_start their absolute starting positions. Plugboard and reflector
+        are left untouched."""
+        rotary_order, rotary_start = rotor_state
+        self.rotaries = tuple(
+            Rotary(rotary_order[i], i, rotary_start[i]) for i in range(3)
+        )
+
+    def set_plugboard(self, wires: list[tuple[str, str]]) -> None:
+        """Replace the plugboard with the symmetric mapping built from <wires>."""
+        plugboard: dict[str, str] = {}
+        for a, b in wires:
+            plugboard[a] = b
+            plugboard[b] = a
+        self.settings.plugboard = plugboard
+
+    def scramble(self, char: str) -> str:
+        """The plugboard-free scrambler at the current rotor positions: forward
+        through the rotors, reflect, back through the rotors -- no stepping, no
+        plugboard. An involution with no fixed points (one bombe drum)."""
+        for i in (2, 1, 0):  # right -> left, toward the reflector
+            char = self.rotaries[i].route(char, inwards=True)
+        char = self.reflector[char]
+        for i in (0, 1, 2):  # left -> right, back out
+            char = self.rotaries[i].route(char, inwards=False)
+        return char
+
+    def scramblers_for(
+        self,
+        rotor_state: tuple[tuple[int, int, int], tuple[str, str, str]],
+        positions,
+    ) -> dict[int, dict[str, str]]:
+        """Return {pos: permutation} of the plugboard-free scrambler at each menu
+        offset in <positions>, built in one forward pass from <rotor_state>. The
+        rotors are stepped exactly as the machine encrypts (step then scramble),
+        so offset k lines up with how decrypt_with treats index k."""
+        wanted = set(positions)
+        if not wanted:
+            return {}
+        self.set_rotor_state(rotor_state)
+        result = {}
+        for k in range(max(wanted) + 1):
+            self.press("A")  # advance the rotors as the machine would; output discarded
+            if k in wanted:
+                result[k] = {ch: self.scramble(ch) for ch in ALPHABET}
+        return result
 
     def press(self, char: str) -> str:
         """Press <char> on the keyboard and return what is

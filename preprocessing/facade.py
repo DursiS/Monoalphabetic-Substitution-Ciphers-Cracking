@@ -7,6 +7,8 @@ import numpy as np
 
 from Cipher_Cracking.data.letter_frequencies import LETTER_FREQ
 from Cipher_Cracking.data.sample_texts import TEXTS_BY_LENGTH
+from Enigma.sample_messages import MESSAGES
+
 
 QUADGRAMS_PATH = "data/quadgrams.json"
 
@@ -18,6 +20,7 @@ class CipherStarter:
     alphabet: str
     log_prob_dict: dict[str, float]
     floor: float
+    sample_german_texts: list[str]
 
     def __init__(self) -> None:
         self.letter_freq = LETTER_FREQ
@@ -25,6 +28,7 @@ class CipherStarter:
         self.sample_texts = TEXTS_BY_LENGTH
         self.alphabet = string.ascii_uppercase
         self.log_prob_dict, self.floor = self.quad_logp_floor(self.quadgrams)
+        self.sample_german_texts = self.load_german_messages()
 
     def random_key(self, seed=None):
         """A random substitution key: a shuffled permutation of A-Z.
@@ -87,6 +91,10 @@ class CipherStarter:
         corresponds to its position in the alphabet."""
         return "".join(self.alphabet[idx] for idx in indices)
 
+    def load_german_messages(self) -> list[str]:
+        """Return a list of WWII German sample communications."""
+        return MESSAGES
+
     def get_english_letter_frequencies(self) -> dict[str, float]:
         return {
             "A": 0.08167,
@@ -115,4 +123,34 @@ class CipherStarter:
             "X": 0.00150,
             "Y": 0.01974,
             "Z": 0.00074,
+        }
+
+    def get_german_letter_frequencies(self) -> dict[str, float]:
+        return {
+            "A": 0.0651,
+            "B": 0.0189,
+            "C": 0.0306,
+            "D": 0.0508,
+            "E": 0.1740,
+            "F": 0.0166,
+            "G": 0.0301,
+            "H": 0.0476,
+            "I": 0.0755,
+            "J": 0.0027,
+            "K": 0.0121,
+            "L": 0.0344,
+            "M": 0.0253,
+            "N": 0.0978,
+            "O": 0.0251,
+            "P": 0.0079,
+            "Q": 0.0002,
+            "R": 0.0700,
+            "S": 0.0727,
+            "T": 0.0615,
+            "U": 0.0435,
+            "V": 0.0067,
+            "W": 0.0189,
+            "X": 0.0003,
+            "Y": 0.0004,
+            "Z": 0.0113,
         }

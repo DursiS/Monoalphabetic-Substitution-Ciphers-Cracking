@@ -9,9 +9,6 @@ Each entry is a dict with:
   - "text":   the German plaintext
   - "source": what the message represents
 
-Spelling reflects mid-20th-century German military usage. If you need a strict
-Enigma alphabet you will typically transliterate ae/oe/ue/ss and strip spaces
-and punctuation before enciphering.
 """
 
 MESSAGES = [

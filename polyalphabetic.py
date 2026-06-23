@@ -1,9 +1,12 @@
+import contextlib
+import io
 import random
 import time
 from collections import Counter
 
 import numpy as np
 
+from Cipher_Cracking.data.sample_texts import SAMPLE_TEXTS
 from Cipher_Cracking.preprocessing.facade import CipherStarter
 
 COLLISION_THRESHOLD = 0.06
@@ -221,6 +224,85 @@ def polyalphabetic_cracking_test() -> None:
     print(f"  matches cleaned plaintext? {back == starter.clean_text(msg)}")
 
 
+def polyalphabetic_corpus_cracking_test(seed: int = 0) -> None:
+    """Crack every sample text (each encrypted with a random key) and report
+    the average cracking time and the success frequency."""
+    starter = CipherStarter()
+    polyalphabetic = PolyalphabeticCipher(starter)
+    rng = random.Random(seed)
+
+    times, lengths, successes = [], [], 0
+    for text in SAMPLE_TEXTS:
+        plain = starter.clean_text(text)
+        length = rng.randint(3, 7)
+        key = "".join(starter.alphabet[rng.randint(0, 25)] for _ in range(length))
+        ct = polyalphabetic.encrypt(plain, key)
+
+        t0 = time.perf_counter()
+        try:  # crack_key prints a line per call -- swallow it for a clean report
+            with contextlib.redirect_stdout(io.StringIO()):
+                cracked = polyalphabetic.crack(ct, COLLISION_THRESHOLD)
+        except Exception:
+            cracked = ""
+        times.append(time.perf_counter() - t0)
+        lengths.append(len(plain))
+        successes += cracked == plain
+
+    n = len(SAMPLE_TEXTS)
+    print(f"samples               : {n}")
+    print(f"success frequency     : {successes}/{n} = {successes / n:.1%}")
+    print(f"average cracking time : {sum(times) / n:.4f}s")
+    print(f"total cracking time   : {sum(times):.2f}s")
+    print(f"text length (min/avg/max): {min(lengths)} / {sum(lengths) / n:.0f} / {max(lengths)}")
+
+
+def polyalphabetic_length_comparison_test(seed: int = 0) -> None:
+    """Crack the shortest 25% vs the longest 25% of the corpus (by cleaned
+    length) and compare success frequency and average cracking time."""
+    starter = CipherStarter()
+    polyalphabetic = PolyalphabeticCipher(starter)
+    rng = random.Random(seed)
+
+    cleaned = sorted((starter.clean_text(t) for t in SAMPLE_TEXTS), key=len)
+    quarter = len(cleaned) // 4
+    cohorts = {
+        "bottom 25% (shortest)": cleaned[:quarter],
+        "top 25% (longest)": cleaned[-quarter:],
+    }
+
+    def run(texts):
+        times, lengths, successes = [], [], 0
+        for plain in texts:
+            length = rng.randint(3, 7)
+            key = "".join(starter.alphabet[rng.randint(0, 25)] for _ in range(length))
+            ct = polyalphabetic.encrypt(plain, key)
+            t0 = time.perf_counter()
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    cracked = polyalphabetic.crack(ct, COLLISION_THRESHOLD)
+            except Exception:
+                cracked = ""
+            times.append(time.perf_counter() - t0)
+            lengths.append(len(plain))
+            successes += cracked == plain
+        return times, lengths, successes
+
+    for label, texts in cohorts.items():
+        times, lengths, successes = run(texts)
+        n = len(texts)
+        print(f"== {label} ==")
+        print(f"  samples               : {n}")
+        print(f"  success frequency     : {successes}/{n} = {successes / n:.1%}")
+        print(f"  average cracking time : {sum(times) / n:.4f}s")
+        print(
+            f"  text length (min/avg/max): "
+            f"{min(lengths)} / {sum(lengths) / n:.0f} / {max(lengths)}"
+        )
+        print()
+
+
 if __name__ == "__main__":
     # polyalphabetic_round_trip_test()
-    polyalphabetic_cracking_test()
+    # polyalphabetic_cracking_test()
+    # polyalphabetic_corpus_cracking_test()
+    polyalphabetic_length_comparison_test()
